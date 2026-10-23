@@ -1,0 +1,56 @@
+name: GitHub to Gitee backup
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror-public-repositories:
+    runs-on: ubuntu-latest
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      OWNER: ckstock
+    steps:
+      - name: Check Gitee token is configured
+        run: test -n "$GITEE_TOKEN"
+
+      - name: Mirror every public repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+
+          curl -fsSL "https://api.github.com/users/${OWNER}/repos?type=owner&per_page=100" \
+            | jq -r '.[] | select(.private == false) | .name' \
+            | grep -vx 'github-gitee-mirror' \
+            | while IFS= read -r repo; do
+                echo "Mirroring ${repo}"
+                gitee_status="$(curl -sS -o /dev/null -w '%{http_code}' "https://gitee.com/api/v5/repos/${OWNER}/${repo}")"
+                if [ "$gitee_status" = '404' ]; then
+                  curl -fsS -X POST 'https://gitee.com/api/v5/user/repos' \
+                    --data-urlencode "access_token=${GITEE_TOKEN}" \
+                    --data-urlencode "name=${repo}" \
+                    --data-urlencode 'private=false' >/dev/null
+                elif [ "$gitee_status" != '200' ]; then
+                  echo "Gitee lookup for ${repo} returned HTTP ${gitee_status}" >&2
+                  exit 1
+                fi
+
+                repo_dir="${workdir}/${repo}"
+                git clone --origin origin "https://github.com/${OWNER}/${repo}.git" "$repo_dir"
+                git -C "$repo_dir" remote add gitee "https://oauth2:${GITEE_TOKEN}@gitee.com/${OWNER}/${repo}.git"
+                git -C "$repo_dir" fetch origin
+
+                git -C "$repo_dir" for-each-ref --format='%(refname:short)' refs/remotes/origin \
+                  | while IFS= read -r remote_branch; do
+                      [ "$remote_branch" = 'origin/HEAD' ] && continue
+                      branch="${remote_branch#origin/}"
+                      git -C "$repo_dir" push gitee "refs/remotes/${remote_branch}:refs/heads/${branch}"
+                    done
+                git -C "$repo_dir" push gitee --tags
+              done
