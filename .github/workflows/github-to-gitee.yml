@@ -30,7 +30,9 @@ jobs:
             | grep -vx 'github-gitee-mirror' \
             | while IFS= read -r repo; do
                 echo "Mirroring ${repo}"
-                gitee_status="$(curl -sS -o /dev/null -w '%{http_code}' "https://gitee.com/api/v5/repos/${OWNER}/${repo}")"
+                gitee_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+                  --get --data-urlencode "access_token=${GITEE_TOKEN}" \
+                  "https://gitee.com/api/v5/repos/${OWNER}/${repo}")"
                 if [ "$gitee_status" = '404' ]; then
                   curl -fsS -X POST 'https://gitee.com/api/v5/user/repos' \
                     --data-urlencode "access_token=${GITEE_TOKEN}" \
