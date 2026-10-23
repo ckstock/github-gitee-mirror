@@ -48,6 +48,7 @@ jobs:
 
                 git -C "$repo_dir" for-each-ref --format='%(refname:short)' refs/remotes/origin \
                   | while IFS= read -r remote_branch; do
+                      [ "$remote_branch" = 'origin' ] && continue
                       [ "$remote_branch" = 'origin/HEAD' ] && continue
                       branch="${remote_branch#origin/}"
                       git -C "$repo_dir" push gitee "refs/remotes/${remote_branch}:refs/heads/${branch}"
