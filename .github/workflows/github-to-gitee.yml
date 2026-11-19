@@ -153,3 +153,60 @@ jobs:
             git -C "$repo_dir" push --quiet gitee --tags
             echo "Private repository branches and tags processed"
           done < "$repo_list"
+
+  audit-gitee-repositories:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      OWNER: ckstock
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+    steps:
+      - name: Read-only Gitee backup audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GITEE_TOKEN" ]]; then
+            echo "::error::GITEE_TOKEN is not set."
+            exit 1
+          fi
+
+          # Check the explicitly requested repository without logging any credentials.
+          result_file="$(mktemp)"
+          trap 'rm -f "$result_file"' EXIT
+          status="$(curl -sS -o "$result_file" -w '%{http_code}' --get \
+            --data-urlencode "access_token=$GITEE_TOKEN" \
+            "https://gitee.com/api/v5/repos/$OWNER/EAAPI")"
+          echo "EAAPI lookup HTTP status: $status"
+          if [[ "$status" == "200" ]]; then
+            jq -r '"EAAPI is_private: \(.private); default_branch: \(.default_branch // "unknown")"' "$result_file"
+          else
+            echo "EAAPI cannot be confirmed with this token (404 can mean absent or unauthorized)."
+          fi
+
+          page=1
+          total=0
+          total_private=0
+          total_public=0
+          while :; do
+            status="$(curl -sS -o "$result_file" -w '%{http_code}' --get \
+              --data-urlencode "access_token=$GITEE_TOKEN" \
+              --data-urlencode "type=owner" --data-urlencode "per_page=100" \
+              --data-urlencode "page=$page" \
+              "https://gitee.com/api/v5/user/repos")"
+            if [[ "$status" != "200" ]]; then
+              echo "::error::Cannot list Gitee repositories, HTTP $status."
+              exit 1
+            fi
+            jq -e 'type == "array"' "$result_file" >/dev/null
+            n="$(jq 'length' "$result_file")"
+            total=$((total + n))
+            private="$(jq '[.[] | select(.private == true)] | length' "$result_file")"
+            public="$(jq '[.[] | select(.private == false)] | length' "$result_file")"
+            total_private=$((total_private + private))
+            total_public=$((total_public + public))
+            if (( n < 100 )); then
+              break
+            fi
+            page=$((page + 1))
+          done
+          echo "Gitee owned repository counts (visible to token): total=$total private=$total_private public=$total_public"
