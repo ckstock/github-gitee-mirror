@@ -1,6 +1,9 @@
 name: GitHub to Gitee backup
 
 on:
+  push:
+    paths:
+      - '.github/workflows/github-to-gitee.yml'
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
@@ -57,3 +60,96 @@ jobs:
                     done
                 git -C "$repo_dir" push gitee --tags
               done
+
+  mirror-private-repositories:
+    runs-on: ubuntu-latest
+    env:
+      OWNER: ckstock
+      GH_MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+    steps:
+      - name: Validate tokens for private repositories
+        shell: bash
+        run: |
+          if [[ -z "$GH_MIRROR_TOKEN" ]]; then
+            echo "::error::Missing GH_MIRROR_TOKEN secret. Add a GitHub fine-grained token with read access to all source repositories."
+            exit 1
+          fi
+          if [[ -z "$GITEE_TOKEN" ]]; then
+            echo "::error::Missing GITEE_TOKEN secret."
+            exit 1
+          fi
+
+      - name: Back up private GitHub repositories to private Gitee repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+          repo_list="$workdir/private-repos.txt"
+          : > "$repo_list"
+
+          page=1
+          while :; do
+            response="$(curl -fsSL --retry 3 \
+              -H "Authorization: Bearer $GH_MIRROR_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/user/repos?affiliation=owner&visibility=private&per_page=100&page=$page")"
+            jq -e 'type == "array"' <<< "$response" >/dev/null
+            count="$(jq 'length' <<< "$response")"
+            jq -r --arg owner "$OWNER" '.[] | select(.owner.login == $owner and .private == true) | .name' <<< "$response" >> "$repo_list"
+            if (( count < 100 )); then
+              break
+            fi
+            page=$((page + 1))
+          done
+
+          if [[ ! -s "$repo_list" ]]; then
+            echo "::error::No private repositories available to GH_MIRROR_TOKEN. Check token repository access."
+            exit 1
+          fi
+          echo "Private repositories found: $(wc -l < "$repo_list")"
+
+          while IFS= read -r repo; do
+            # The Actions repository is public: redact private repository names from logs.
+            echo "::add-mask::$repo"
+            echo "Processing private repository"
+
+            gitee_status="$(curl -sS -o "$workdir/gitee.json" -w '%{http_code}' \
+              --get --data-urlencode "access_token=$GITEE_TOKEN" \
+              "https://gitee.com/api/v5/repos/$OWNER/$repo")"
+
+            if [[ "$gitee_status" == "404" ]]; then
+              curl -fsSL --retry 3 -X POST "https://gitee.com/api/v5/user/repos" \
+                --data-urlencode "access_token=$GITEE_TOKEN" \
+                --data-urlencode "name=$repo" \
+                --data-urlencode "private=true" > "$workdir/gitee.json"
+            elif [[ "$gitee_status" != "200" ]]; then
+              echo "::error::Gitee repository lookup failed with HTTP $gitee_status"
+              exit 1
+            fi
+
+            # Never write private GitHub code into a public Gitee repository.
+            if ! jq -e '.private == true' "$workdir/gitee.json" >/dev/null; then
+              echo "::error::Target Gitee repository is not private. No code was pushed."
+              exit 1
+            fi
+
+            repo_dir="$workdir/$repo"
+            basic_auth="$(printf 'x-access-token:%s' "$GH_MIRROR_TOKEN" | base64 -w0)"
+            git -c "http.extraheader=AUTHORIZATION: Basic $basic_auth" \
+              clone --quiet --origin origin "https://github.com/$OWNER/$repo.git" "$repo_dir"
+            unset basic_auth
+            git -C "$repo_dir" remote add gitee "https://oauth2:$GITEE_TOKEN@gitee.com/$OWNER/$repo.git"
+
+            git -C "$repo_dir" for-each-ref --format='%(refname:short)' refs/remotes/origin \
+              | while IFS= read -r remote_branch; do
+                  [[ "$remote_branch" == "origin" ]] && continue
+                  [[ "$remote_branch" == "origin/HEAD" ]] && continue
+                  branch="${remote_branch#origin/}"
+                  git -C "$repo_dir" push --quiet gitee "refs/remotes/$remote_branch:refs/heads/$branch"
+                done
+            git -C "$repo_dir" push --quiet gitee --tags
+            echo "Private repository branches and tags processed"
+          done < "$repo_list"
