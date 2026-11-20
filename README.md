@@ -17,3 +17,4 @@ Private discovery is paginated; public discovery currently supports up to 100 ow
 ## Verification and recovery
 
 After dispatch, verify both mirror jobs, source repository counts and target branch/tag refs. A successful credential check alone is not a completed backup. Check Gitee repository capacity and permissions if creation fails. Disable the workflow to stop future backups; existing Gitee copies remain intact. Rotate credentials and update the corresponding secret if access changes.
+Private targets are resolved by source name, lowercase path, then matching Gitee display name to its actual path. Multiple same-page matches stop the job. Cross-page duplicate display names remain a limitation if the target account grows beyond 100 repositories. After every private push, the workflow reads back target refs and verifies that each source branch/tag has the same SHA; extra target refs remain preserved.
