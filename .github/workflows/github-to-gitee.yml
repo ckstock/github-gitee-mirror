@@ -123,6 +123,7 @@ jobs:
             target_repo="$repo"
             if [[ "$gitee_status" == "404" ]]; then
               target_repo="${repo,,}"
+              echo "::add-mask::$target_repo"
               gitee_status="$(curl -sS -o "$workdir/gitee.json" -w '%{http_code}' --get --data-urlencode "access_token=$GITEE_TOKEN" "https://gitee.com/api/v5/repos/$OWNER/$target_repo")"
             fi
             if [[ "$gitee_status" == "404" ]]; then
