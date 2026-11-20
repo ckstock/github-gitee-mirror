@@ -121,10 +121,10 @@ jobs:
               "https://gitee.com/api/v5/repos/$OWNER/$repo")"
 
             if [[ "$gitee_status" == "404" ]]; then
-              curl -fsSL --retry 3 -X POST "https://gitee.com/api/v5/user/repos" \
+              curl --fail-with-body -sSL --retry 3 -X POST "https://gitee.com/api/v5/user/repos" \
                 --data-urlencode "access_token=$GITEE_TOKEN" \
                 --data-urlencode "name=$repo" \
-                --data-urlencode "private=true" > "$workdir/gitee.json"
+                --data-urlencode "private=true" > "$workdir/gitee.json" || { jq -c '{message,errors}' "$workdir/gitee.json"; exit 1; }
             elif [[ "$gitee_status" != "200" ]]; then
               echo "::error::Gitee repository lookup failed with HTTP $gitee_status"
               exit 1
