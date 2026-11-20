@@ -127,11 +127,26 @@ jobs:
               gitee_status="$(curl -sS -o "$workdir/gitee.json" -w '%{http_code}' --get --data-urlencode "access_token=$GITEE_TOKEN" "https://gitee.com/api/v5/repos/$OWNER/$target_repo")"
             fi
             if [[ "$gitee_status" == "404" ]]; then
+              matched=""
+              target_page=1
+              while :; do
+                targets="$(curl -fsSL --get --data-urlencode "access_token=$GITEE_TOKEN" --data-urlencode 'type=owner' --data-urlencode 'per_page=100' --data-urlencode "page=$target_page" "https://gitee.com/api/v5/user/repos")"
+                matched="$(jq -r --arg name "$repo" '.[] | select((.name|ascii_downcase)==($name|ascii_downcase)) | .path' <<< "$targets" | head -n1)"
+                [[ -n "$matched" ]] && break
+                [[ "$(jq length <<< "$targets")" -lt 100 ]] && break
+                target_page=$((target_page+1))
+              done
+              if [[ -n "$matched" ]]; then
+                target_repo="$matched"
+                echo "::add-mask::$target_repo"
+                curl -fsSL --get --data-urlencode "access_token=$GITEE_TOKEN" "https://gitee.com/api/v5/repos/$OWNER/$target_repo" > "$workdir/gitee.json"
+              else
               target_repo="$repo"
               curl --fail-with-body -sSL --retry 3 -X POST "https://gitee.com/api/v5/user/repos" \
                 --data-urlencode "access_token=$GITEE_TOKEN" \
                 --data-urlencode "name=$repo" \
                 --data-urlencode "private=true" > "$workdir/gitee.json" || { jq -c 'del(.access_token,.token,.password,.secret)' "$workdir/gitee.json"; exit 1; }
+              fi
             elif [[ "$gitee_status" != "200" ]]; then
               echo "::error::Gitee repository lookup failed with HTTP $gitee_status"
               exit 1
