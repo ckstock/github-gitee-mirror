@@ -120,7 +120,13 @@ jobs:
               --get --data-urlencode "access_token=$GITEE_TOKEN" \
               "https://gitee.com/api/v5/repos/$OWNER/$repo")"
 
+            target_repo="$repo"
             if [[ "$gitee_status" == "404" ]]; then
+              target_repo="${repo,,}"
+              gitee_status="$(curl -sS -o "$workdir/gitee.json" -w '%{http_code}' --get --data-urlencode "access_token=$GITEE_TOKEN" "https://gitee.com/api/v5/repos/$OWNER/$target_repo")"
+            fi
+            if [[ "$gitee_status" == "404" ]]; then
+              target_repo="$repo"
               curl --fail-with-body -sSL --retry 3 -X POST "https://gitee.com/api/v5/user/repos" \
                 --data-urlencode "access_token=$GITEE_TOKEN" \
                 --data-urlencode "name=$repo" \
@@ -141,7 +147,7 @@ jobs:
             git -c "http.extraheader=AUTHORIZATION: Basic $basic_auth" \
               clone --quiet --origin origin "https://github.com/$OWNER/$repo.git" "$repo_dir"
             unset basic_auth
-            git -C "$repo_dir" remote add gitee "https://oauth2:$GITEE_TOKEN@gitee.com/$OWNER/$repo.git"
+            git -C "$repo_dir" remote add gitee "https://oauth2:$GITEE_TOKEN@gitee.com/$OWNER/$target_repo.git"
 
             git -C "$repo_dir" for-each-ref --format='%(refname:short)' refs/remotes/origin \
               | while IFS= read -r remote_branch; do
