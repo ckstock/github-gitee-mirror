@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/github-to-gitee.yml'
+      - 'scripts/complete_backup.py'
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
@@ -30,7 +31,6 @@ jobs:
 
           curl -fsSL "https://api.github.com/users/${OWNER}/repos?type=owner&per_page=100" \
             | jq -r '.[] | select(.private == false) | .name' \
-            | grep -vx 'github-gitee-mirror' \
             | while IFS= read -r repo; do
                 echo "Mirroring ${repo}"
                 gitee_status="$(curl -sS -o /dev/null -w '%{http_code}' \
@@ -241,3 +241,17 @@ jobs:
             page=$((page + 1))
           done
           echo "Gitee owned repository counts (visible to token): total=$total private=$total_private public=$total_public"
+
+  archive-github-metadata:
+    needs: [mirror-public-repositories, mirror-private-repositories]
+    runs-on: ubuntu-latest
+    env:
+      OWNER: ckstock
+      GH_MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive metadata and wiki with read-back verification
+        run: python3 scripts/complete_backup.py
