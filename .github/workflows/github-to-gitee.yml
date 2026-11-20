@@ -131,6 +131,8 @@ jobs:
               target_page=1
               while :; do
                 targets="$(curl -fsSL --get --data-urlencode "access_token=$GITEE_TOKEN" --data-urlencode 'type=owner' --data-urlencode 'per_page=100' --data-urlencode "page=$target_page" "https://gitee.com/api/v5/user/repos")"
+                match_count="$(jq --arg name "$repo" '[.[] | select((.name|ascii_downcase)==($name|ascii_downcase))] | length' <<< "$targets")"
+                if (( match_count > 1 )); then echo "::error::Ambiguous Gitee target name"; exit 1; fi
                 matched="$(jq -r --arg name "$repo" '.[] | select((.name|ascii_downcase)==($name|ascii_downcase)) | .path' <<< "$targets" | head -n1)"
                 [[ -n "$matched" ]] && break
                 [[ "$(jq length <<< "$targets")" -lt 100 ]] && break
@@ -173,6 +175,13 @@ jobs:
                   git -C "$repo_dir" push --quiet gitee "refs/remotes/$remote_branch:refs/heads/$branch"
                 done
             git -C "$repo_dir" push --quiet gitee --tags
+            git -C "$repo_dir" for-each-ref --format='%(objectname) %(refname)' refs/remotes/origin | sed 's# refs/remotes/origin/# refs/heads/#' | grep -v ' refs/heads/HEAD$' > "$workdir/expected-refs"
+            git -C "$repo_dir" for-each-ref --format='%(objectname) %(refname)' refs/tags >> "$workdir/expected-refs"
+            git -C "$repo_dir" ls-remote --refs gitee > "$workdir/target-refs"
+            awk '{print $1 " " $2}' "$workdir/target-refs" | sort > "$workdir/target-sorted"
+            sort "$workdir/expected-refs" > "$workdir/source-sorted"
+            if [[ -n "$(comm -23 "$workdir/source-sorted" "$workdir/target-sorted")" ]]; then echo "::error::Target reference verification failed"; exit 1; fi
+            echo "Private repository branches and tags verified"
             echo "Private repository branches and tags processed"
           done < "$repo_list"
 
