@@ -4,6 +4,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,11 +25,15 @@ def api(host, path, params=None):
     else:
         params['access_token'] = GT
     url = root + path + ('?' + urllib.parse.urlencode(params) if params else '')
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=90) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        raise RuntimeError('API HTTP ' + str(e.code)) from None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=90) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError('API HTTP ' + str(e.code)) from None
 
 
 def pages(host, path, params=None):
